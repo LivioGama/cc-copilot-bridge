@@ -428,6 +428,49 @@ ollama pull ibm/granite4:small-h  # Long context, less VRAM
 cco
 ```
 
+### 🧪 Option 4: JetBrains Junie (5 minutes)
+
+**Prerequisites**:
+- Node.js 20+ (`node --version`)
+- Active JetBrains Junie/Grazie subscription (JetBrains AI license, IDE or standalone)
+- Claude Code CLI installed
+
+**Setup**:
+```bash
+# 1. Authenticate with JetBrains (one-time, OAuth device flow)
+bunx junie-api auth
+# Follow the browser prompt; token cached locally.
+
+# 2. Start junie-api on port 4142 (backgrounded in your preferred way)
+bunx junie-api start --port 4142 &
+
+# 3. Use it
+ccj                                      # Default: google-chat-gemini-pro-2.5
+JUNIE_MODEL=openai-gpt4.1 ccj             # Override model
+ccj-sonnet                               # Alias for Claude Sonnet 4.6 via Junie
+```
+
+**Common models**:
+- `google-chat-gemini-pro-2.5` (default, best overall)
+- `google-chat-gemini-flash-2.5` (fast / cheap)
+- `openai-gpt4.1`, `openai-gpt4.1-mini`
+- `claude-sonnet-4-6`, `claude-opus-4-6`
+
+**Rate limiting** (optional):
+```bash
+bunx junie-api start --port 4142 --rate-limit 30 --wait
+```
+`--rate-limit 30` = min 30s between requests; `--wait` = block instead of fail when limit hit.
+
+**Troubleshooting**:
+- "Not authenticated" → run `bunx junie-api auth` again.
+- "Port 4142 already in use" → kill stale process: `lsof -ti:4142 | xargs kill`.
+- Rate-limited by JetBrains → add `--rate-limit` or cool down.
+- `upstream_error 404` on Gemini models → your JetBrains AI tier may not include Gemini. Override with `JUNIE_MODEL=openai-gpt4.1 ccj` (GPT-4.1 is available on all tiers).
+- Check credits anytime: `bunx junie-api balance`.
+
+**⚠️ Risk**: junie-api is a reverse-engineered proxy. Not supported by JetBrains. May break. Excessive automated use may violate the [JetBrains AI ToS](https://www.jetbrains.com/legal/docs/terms/jetbrains-ai-service/). Personal-use only.
+
 ---
 
 ## Daily Usage

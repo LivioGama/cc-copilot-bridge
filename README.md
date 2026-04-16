@@ -1,6 +1,6 @@
 # cc-copilot-bridge
 
-> **TL;DR**: Bash script that routes Claude Code CLI through multiple AI providers. Switch between Anthropic Direct API, GitHub Copilot (via copilot-api proxy), or Ollama local with simple aliases (`ccd`, `ccc`, `cco`).
+> **TL;DR**: Bash script that routes Claude Code CLI through multiple AI providers. Switch between Anthropic Direct API, GitHub Copilot (via copilot-api proxy), Ollama local, or JetBrains Junie with simple aliases (`ccd`, `ccc`, `cco`, `ccj`).
 
 > 📖 **New to Claude Code?** Check out the [Claude Code Ultimate Guide](https://cc.bruniaux.com/) for comprehensive documentation, tips, and best practices.
 
@@ -41,35 +41,49 @@ Use your existing GitHub Copilot subscription with Claude Code, or run 100% offl
 
 A **multi-provider router** for Claude Code CLI that lets you switch between AI backends with simple aliases.
 
-### Three Providers, One Interface
+### Four Providers, One Interface
 
 | Provider | Command | Use Case | Cost Model |
 |----------|---------|----------|------------|
 | **Anthropic Direct** | `ccd` | Production, maximum quality | Pay-per-token |
 | **GitHub Copilot** | `ccc` | Daily development | Premium requests quota |
 | **Ollama Local** | `cco` | Offline, proprietary code | Free (local compute) |
+| **JetBrains Junie** | `ccj` | JetBrains ecosystem / Gemini-first workflows | JetBrains AI subscription |
 
 ### Architecture Overview
 
-```
-┌─────────────────────────────────────────────────┐
-│           Claude Code CLI                       │
-│         (Anthropic's CLI tool)                  │
-└─────────────────┬───────────────────────────────┘
-                  │
-        ┌─────────▼──────────┐
-        │  cc-copilot-bridge │  ◄─── This Tool
-        └─────────┬──────────┘
-                  │
-        ┌─────────┴────────────┌─────────────────┐
-        │                      |                 │
-    ┌───▼────┐         ┌───────▼────────┐   ┌───▼────┐
-    │ Direct │         │ Copilot Bridge │   │ Ollama │
-    │  API   │         │  (copilot-api) │   │ Local  │
-    └────────┘         └────────────────┘   └────────┘
-    Anthropic           GitHub Copilot       Self-hosted
-    Pay-per-token       Premium requests     Free (offline)
-                        quota system
+```mermaid
+flowchart TD
+    CLI["Claude Code CLI<br/><sub>Anthropic's CLI tool</sub>"]
+    Bridge["cc-copilot-bridge<br/><sub>claude-switch — this tool</sub>"]
+
+    Direct["Anthropic Direct API<br/><sub>Pay-per-token</sub>"]
+    Copilot["copilot-api<br/><sub>localhost:4141</sub>"]
+    Ollama["Ollama Local<br/><sub>localhost:11434</sub>"]
+    Junie["junie-api<br/><sub>localhost:4142</sub>"]
+
+    Anthropic[("Anthropic<br/>Claude models")]
+    GHCopilot[("GitHub Copilot<br/>Premium-requests quota")]
+    OllamaLocal[("Local models<br/>Self-hosted, offline")]
+    Grazie[("JetBrains Grazie<br/>AI subscription")]
+
+    CLI --> Bridge
+    Bridge -->|ccd| Direct
+    Bridge -->|ccc| Copilot
+    Bridge -->|cco| Ollama
+    Bridge -->|ccj| Junie
+
+    Direct --> Anthropic
+    Copilot --> GHCopilot
+    Ollama --> OllamaLocal
+    Junie --> Grazie
+
+    classDef tool fill:#3b82f6,stroke:#1e40af,color:#fff
+    classDef proxy fill:#1f2937,stroke:#6b7280,color:#fff
+    classDef backend fill:#059669,stroke:#047857,color:#fff
+    class Bridge tool
+    class Direct,Copilot,Ollama,Junie proxy
+    class Anthropic,GHCopilot,OllamaLocal,Grazie backend
 ```
 
 ---
@@ -121,6 +135,23 @@ Add to `~/.bashrc`: `eval "$(claude-switch --shell-config)"`
 
 </details>
 
+<details>
+<summary><b>JetBrains Junie (optional 4th provider)</b></summary>
+
+To enable the `ccj` alias, authenticate with your JetBrains account first, then launch Claude Code through the Junie proxy:
+
+```bash
+# 1. Authenticate once with your JetBrains AI subscription
+bunx junie-api auth
+
+# 2. Start Claude Code routed through Junie
+ccj
+```
+
+> ⚠️ Junie integration uses a reverse-engineered proxy of JetBrains Junie/Grazie. Not officially supported by JetBrains; may break at any time. Use with a personal subscription only. See [Risk Disclosure](#-risk-disclosure).
+
+</details>
+
 **Alternative: Script Install** (if package managers unavailable)
 
 ```bash
@@ -141,6 +172,7 @@ The installer creates `~/.claude/aliases.sh` with these commands:
 ccd        # Anthropic API (paid)
 ccc        # GitHub Copilot (default: Claude Sonnet 4.6)
 cco        # Ollama Local (offline)
+ccj        # JetBrains Junie (default: Gemini 2.5 Pro)
 ccs        # Check all providers
 
 # Model shortcuts (40+ models)
@@ -162,6 +194,10 @@ ccc
 # Switch models on-the-fly
 COPILOT_MODEL=gpt-4.1 ccc
 COPILOT_MODEL=claude-opus-4-6 ccc
+
+# JetBrains Junie provider
+ccj                                      # JetBrains Junie (default: Gemini 2.5 Pro)
+JUNIE_MODEL=openai-gpt4.1 ccj             # GPT-5 via Junie
 
 # Check status
 ccs
@@ -224,6 +260,17 @@ Different models consume different amounts of premium requests per interaction:
 
 **Source**: [GitHub Copilot Plans](https://docs.github.com/en/copilot/about-github-copilot/subscription-plans-for-github-copilot)
 
+### JetBrains Junie
+
+Routing through `ccj` uses your **JetBrains AI subscription** via the Junie/Grazie backend. There is no per-token billing from this project — quotas follow your JetBrains plan.
+
+- **Plan required**: An active JetBrains AI / Junie / Grazie subscription on your JetBrains account
+- **Access tier**: Whatever your plan grants (Gemini 2.5 Pro, GPT-5, Claude families, etc. — subject to JetBrains' model catalog)
+- **Billing**: Handled by JetBrains; no Anthropic/GitHub quota is consumed
+- ⚠️ **Reverse-engineered**: `junie-api` is a community reverse-engineering of JetBrains' internal protocol, **not** an official JetBrains integration. It is **subject to JetBrains AI Terms of Service**, and excessive automated use may violate those terms and risk account action. Use with a personal subscription only, and at your own risk.
+
+**Source**: [JetBrains AI Terms of Service](https://www.jetbrains.com/legal/docs/terms/jetbrains-ai/) · [junie-api](https://github.com/fabienfleureau/junie-api)
+
 ---
 
 ## 🎨 Features
@@ -234,9 +281,12 @@ Different models consume different amounts of premium requests per interaction:
 ccd     # Anthropic Direct API (production)
 ccc     # GitHub Copilot Bridge (prototyping)
 cco     # Ollama Local (offline/private)
+ccj     # JetBrains Junie (Gemini-first)
 ```
 
 No config changes, no restarts, no environment variable juggling.
+
+🧪 **JetBrains Junie** — Use your JetBrains Junie/Grazie subscription; access Gemini, GPT, and Claude models through JetBrains' AI service (reverse-engineered proxy; may break; use at own risk).
 
 **Help Menu**:
 ![Claude Switch Help](assets/claude-switch-help.png)
@@ -625,9 +675,23 @@ Community reports indicate that:
 | **Production code** | Anthropic Direct (`ccd`) - Official API, no ToS risk |
 | **Sensitive/proprietary code** | Ollama Local (`cco`) - 100% offline, no cloud |
 | **Daily development** | Copilot (`ccc`) - Understand the risks first |
-| **Risk-averse users** | Avoid copilot-api entirely |
+| **JetBrains ecosystem** | Junie (`ccj`) - Personal subscription only, reverse-engineered proxy |
+| **Risk-averse users** | Avoid copilot-api and junie-api entirely |
 
 **Source**: [GitHub Terms of Service - API Terms](https://docs.github.com/site-policy/github-terms/github-terms-of-service#h-api-terms)
+
+### JetBrains Junie: Additional Disclosure
+
+The `ccj` provider routes through [junie-api](https://github.com/fabienfleureau/junie-api), a community reverse-engineered proxy of JetBrains Junie/Grazie.
+
+**Important disclaimers specific to Junie**:
+
+1. **Not officially supported by JetBrains** — junie-api is not endorsed by JetBrains s.r.o. or any affiliate
+2. **Reverse-engineered protocol** — The underlying API is unstable and may break unexpectedly if JetBrains updates their service
+3. **ToS risk** — Automated or high-volume use may violate the [JetBrains AI Terms of Service](https://www.jetbrains.com/legal/docs/terms/jetbrains-ai/), which can result in account action at JetBrains' discretion
+4. **Personal use only** — Do not use this integration with JetBrains Business/Enterprise seats or shared credentials
+5. **No warranty** — The authors of cc-copilot-bridge and junie-api provide no warranty and accept no liability for subscription cancellation, account suspension, or service interruption
+6. **Use at your own risk** — If in doubt, prefer `ccd` (Anthropic Direct) or `cco` (Ollama Local)
 
 ---
 
@@ -647,6 +711,7 @@ Enhance your Claude Code workflow:
 ## 📖 Credits
 
 - **copilot-api**: [ericc-ch/copilot-api](https://github.com/ericc-ch/copilot-api) - The bridge that makes this possible
+- **junie-api**: [fabienfleureau/junie-api](https://github.com/fabienfleureau/junie-api) - Reverse-engineered JetBrains Junie/Grazie proxy powering the `ccj` provider (MIT)
 - **Claude Code**: [Anthropic](https://www.anthropic.com/) - The CLI tool we're enhancing
 - **Ollama**: [ollama.ai](https://ollama.ai/) - Local AI inference
 
@@ -669,5 +734,6 @@ MIT
 
 ### Community Tools
 - **[copilot-api](https://github.com/ericc-ch/copilot-api)** - GitHub Copilot API proxy (core dependency)
+- **[junie-api](https://github.com/fabienfleureau/junie-api)** - JetBrains Junie/Grazie proxy (powers `ccj`)
 - **[Ollama](https://ollama.ai/)** - Local AI inference platform
 - **awesome-claude-code** - Curated list of Claude Code resources

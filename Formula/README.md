@@ -98,7 +98,7 @@ brew test claude-switch
 
 **Optionnelles** :
 - `ollama` : Pour provider Ollama local
-- `node` : Pour copilot-api (GitHub Copilot provider)
+- `node` : Pour copilot-api (GitHub Copilot provider) et junie-api (JetBrains Junie provider)
 
 ### SHA256 Checksum
 

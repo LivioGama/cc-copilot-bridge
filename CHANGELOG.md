@@ -15,6 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.8.0] - 2026-04-16
+
+### 🎉 Added — JetBrains Junie Provider
+
+- **New 4th provider**: `junie` mode (alias `ccj`) routes Claude Code through [junie-api](https://github.com/fabienfleureau/junie-api) — a reverse-engineered proxy for JetBrains Junie/Grazie AI.
+- **Vendored source**: `junie/` directory contains an embedded copy of junie-api (upstream: MIT) for local development and offline builds.
+- **New aliases**: `ccj`, `ccj-gemini`, `ccj-gemini-flash`, `ccj-gpt`, `ccj-gpt-mini`, `ccj-sonnet`, `ccj-opus`, `ccj-jetbrains`.
+- **Port**: Junie runs on `localhost:4142` (copilot-api remains on 4141 — no conflict).
+- **Auth**: JetBrains OAuth device flow via `bunx junie-api auth` (one-time setup).
+- **Models**: Gemini 2.5 Pro (default), Gemini 2.5 Flash (fast), GPT-5, Claude Sonnet/Opus 4.6 — accessed through JetBrains' AI gateway.
+- **Rate limiting**: Supports junie-api's `--rate-limit` and `--wait` flags for managing subscription quotas.
+- **Installer**: `install.sh` now detects and optionally configures Junie alongside the other providers.
+- **Documentation**: `README.md`, `QUICKSTART.md`, and `CLAUDE.md` updated with Junie sections.
+
+### ⚠️ Risk Disclosure
+
+- Junie integration uses a reverse-engineered proxy; **not officially supported by JetBrains**.
+- Excessive automated/scripted use may violate the [JetBrains AI Service ToS](https://www.jetbrains.com/legal/docs/terms/jetbrains-ai-service/) and risk account suspension.
+- Intended for personal use with your own JetBrains Junie subscription. Use at your own risk.
+
+### 🙏 Credits
+
+- [fabienfleureau/junie-api](https://github.com/fabienfleureau/junie-api) — the upstream Junie proxy that powers this integration. License: MIT.
+
+---
+
 ## [1.7.0] - 2026-03-15
 
 ### Added
@@ -852,6 +878,7 @@ See [REPO-STRUCTURE.md](REPO-STRUCTURE.md) for contribution guidelines.
 - **Repository**: https://github.com/FlorianBruniaux/cc-copilot-bridge
 - **Issues**: https://github.com/FlorianBruniaux/cc-copilot-bridge/issues
 
+[1.8.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.8.0
 [1.7.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.7.0
 [1.6.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.6.0
 [1.5.3]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.5.3
@@ -862,4 +889,4 @@ See [REPO-STRUCTURE.md](REPO-STRUCTURE.md) for contribution guidelines.
 [1.3.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.3.0
 [1.2.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.2.0
 [1.0.0]: https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/tag/v1.0.0
-[Unreleased]: https://github.com/FlorianBruniaux/cc-copilot-bridge/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/FlorianBruniaux/cc-copilot-bridge/compare/v1.8.0...HEAD

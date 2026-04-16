@@ -28,6 +28,7 @@ EOF
 echo -e "${NC}"
 echo "Claude Code Multi-Provider Switcher Installer"
 echo "=============================================="
+echo "Supported providers: Direct, Copilot, Ollama, Junie"
 echo ""
 echo -e "${GREEN}✓ Respects your shell config${NC}"
 echo "  This installer will:"
@@ -138,6 +139,7 @@ export PATH="$HOME/bin:$PATH"
 alias ccd='claude-switch direct'
 alias ccc='claude-switch copilot'
 alias cco='claude-switch ollama'
+alias ccj='claude-switch junie'
 alias ccs='claude-switch status'
 
 # Copilot Model Shortcuts
@@ -153,6 +155,32 @@ alias ccc-gemini3-pro='COPILOT_MODEL=gemini-3-pro-preview claude-switch copilot'
 alias cco-devstral='OLLAMA_MODEL=devstral-small-2 claude-switch ollama'
 alias cco-granite='OLLAMA_MODEL=ibm/granite4:small-h claude-switch ollama'
 ALIASES_EOF
+
+# Optional: Junie (JetBrains) provider setup
+echo ""
+echo "Checking for JetBrains Junie provider support..."
+if timeout 2 bunx junie-api --help &> /dev/null; then
+    echo -e "${GREEN}✓ junie-api is available via bunx${NC}"
+    JUNIE_ENABLE="y"
+else
+    echo ""
+    read -p "Would you like to enable JetBrains Junie provider? (needs Node + JetBrains Junie subscription) [y/N]: " JUNIE_ENABLE
+    JUNIE_ENABLE=${JUNIE_ENABLE:-n}
+fi
+
+if [ "$JUNIE_ENABLE" = "y" ] || [ "$JUNIE_ENABLE" = "Y" ]; then
+    echo ""
+    echo -e "${GREEN}✓ Junie provider enabled${NC}"
+    echo "  To authenticate later, run:"
+    echo -e "    ${BLUE}bunx junie-api auth${NC}"
+    echo "  (OAuth flow requires user interaction — skipped in installer)"
+    echo "" >> "$ALIASES_FILE"
+    echo "# Junie (JetBrains) provider" >> "$ALIASES_FILE"
+    echo "export CC_BRIDGE_JUNIE_ENABLED=1" >> "$ALIASES_FILE"
+    echo "✓ Added CC_BRIDGE_JUNIE_ENABLED=1 to $ALIASES_FILE"
+else
+    echo "  Skipping Junie setup (can enable later by editing $ALIASES_FILE)"
+fi
 
 echo "✓ Created $ALIASES_FILE"
 
@@ -183,7 +211,7 @@ else
     echo ""
     echo "Aliases created in: ${GREEN}~/.claude/aliases.sh${NC}"
     echo ""
-    echo "You MUST source this file to use the commands (ccd, ccc, cco)."
+    echo "You MUST source this file to use the commands (ccd, ccc, cco, ccj)."
     echo ""
     echo "Choose one method:"
     echo ""
@@ -281,10 +309,15 @@ echo ""
 echo "   📦 Alternative: Pull backup model for long-context tasks:"
 echo -e "      ${BLUE}ollama pull ibm/granite4:small-h${NC}"
 echo ""
+echo "   🧠 JetBrains Junie (optional, requires subscription):"
+echo -e "      ${BLUE}bunx junie-api auth${NC}  # Authenticate (OAuth)"
+echo -e "      ${BLUE}bunx junie-api start${NC}  # Start local proxy"
+echo ""
 echo "4. Start using:"
 echo -e "   ${BLUE}ccd${NC}        # Anthropic Direct"
 echo -e "   ${BLUE}ccc${NC}        # GitHub Copilot"
 echo -e "   ${BLUE}cco${NC}        # Ollama Local"
+echo -e "   ${BLUE}ccj${NC}        # JetBrains Junie (if enabled) — or claude-switch junie"
 echo -e "   ${BLUE}ccc-opus${NC}   # Copilot with Opus model"
 echo ""
 echo "Documentation:"

@@ -18,6 +18,7 @@ export PATH="$HOME/bin:$PATH"
 alias ccd='claude-switch direct'
 alias ccc='claude-switch copilot'
 alias cco='claude-switch ollama'
+alias ccj='claude-switch junie'
 alias ccs='claude-switch status'
 
 # Copilot Model Shortcuts
@@ -44,6 +45,16 @@ alias ccc-gemini31='COPILOT_MODEL=gemini-3.1-pro-preview claude-switch copilot'
 alias cco-devstral='OLLAMA_MODEL=devstral-small-2 claude-switch ollama'
 alias cco-granite='OLLAMA_MODEL=ibm/granite4:small-h claude-switch ollama'
 
+# Junie Model Shortcuts
+# Note: Gemini models (ccj-gemini, ccj-gemini-flash) are tier-gated on JetBrains AI
+# and may return 404 on Personal subscriptions. GPT-4.1 / Claude aliases work on all tiers.
+alias ccj-gemini='JUNIE_MODEL=google-chat-gemini-pro-2.5 claude-switch junie'
+alias ccj-gemini-flash='JUNIE_MODEL=google-chat-gemini-flash-2.5 claude-switch junie'
+alias ccj-gpt='JUNIE_MODEL=openai-gpt4.1 claude-switch junie'
+alias ccj-gpt-mini='JUNIE_MODEL=openai-gpt4.1-mini claude-switch junie'
+alias ccj-sonnet='JUNIE_MODEL=claude-sonnet-4-6 claude-switch junie'
+alias ccj-opus='JUNIE_MODEL=claude-opus-4-6 claude-switch junie'
+
 # Unified Fork (Recommended - Codex + Gemini 3 + gpt-5.4)
 alias ccunified='~/Sites/perso/cc-copilot-bridge/scripts/launch-unified-fork.sh'
 alias ccc-codex='COPILOT_MODEL=gpt-5.3-codex claude-switch copilot'
@@ -59,6 +70,7 @@ alias ccc-quick='COPILOT_MODEL=claude-haiku-4.5 claude-switch copilot'
 alias ccc-code='COPILOT_MODEL=gpt-5.3-codex claude-switch copilot'
 alias ccc-alt='COPILOT_MODEL=gpt-4.1 claude-switch copilot'
 alias ccc-private='OLLAMA_MODEL=devstral-small-2 claude-switch ollama'
+alias ccj-jetbrains='JUNIE_MODEL=google-chat-gemini-pro-2.5 claude-switch junie'  # JetBrains native stack
 EOF
 
 echo "✓ Created $ALIASES_FILE"

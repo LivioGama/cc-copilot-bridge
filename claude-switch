@@ -1,8 +1,8 @@
 #!/bin/bash
 # Claude Code Multi-Provider Switcher
 # Usage: claude-switch <mode> [claude args...]
-# Modes: direct (d), copilot (c), ollama (o), status (s)
-# Version: 1.7.0 - Models update: Claude Sonnet/Opus 4.6, GPT-5.3-Codex, Grok Code Fast 1, Ollama 0.15.3
+# Modes: direct (d), copilot (c), ollama (o), junie (j), status (s)
+# Version: 1.8.0 - Junie provider added (JetBrains Junie/Grazie via junie-api on :4142)
 
 set -euo pipefail
 
@@ -71,6 +71,16 @@ _check_ollama() {
     return 1
   fi
   _log "INFO" "Ollama health: OK (model: ${model})"
+}
+
+_check_junie() {
+  if ! _check_port "localhost" "4142"; then
+    _log "ERROR" "junie-api not running on :4142"
+    echo "  Start it with: bunx junie-api start --port 4142"
+    echo "  First run:     bunx junie-api auth"
+    return 1
+  fi
+  _log "INFO" "junie-api health: OK"
 }
 
 # === Session Tracking ===
@@ -267,6 +277,29 @@ _run_ollama() {
   return $rc
 }
 
+_run_junie() {
+  _check_junie || return 1
+
+  # Allow model override via env var or use default
+  local model="${JUNIE_MODEL:-google-chat-gemini-pro-2.5}"
+
+  _log "INFO" "Provider: JetBrains Junie (via junie-api) - Model: ${model}"
+  echo -e "${BLUE}━━━ Claude Code [JetBrains Junie: ${model}] ━━━${NC}"
+
+  export ANTHROPIC_BASE_URL="http://localhost:4142"
+  export ANTHROPIC_AUTH_TOKEN="dummy"  # junie-api ignores this value
+  export ANTHROPIC_MODEL="${model}"
+  export ANTHROPIC_SMALL_FAST_MODEL="google-chat-gemini-flash-2.5"
+  export DISABLE_NON_ESSENTIAL_MODEL_CALLS="1"
+  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+
+  _session_start "junie:${model}"
+  claude "$@"
+  local rc=$?
+  _session_end $rc
+  return $rc
+}
+
 _show_status() {
   echo "=== Claude Code Provider Status ==="
   echo ""
@@ -293,6 +326,13 @@ _show_status() {
     echo -e "${RED}✗ Not running${NC}"
   fi
 
+  echo -n "Junie API:      "
+  if _check_port "localhost" "4142"; then
+    echo -e "${GREEN}✓ Running (:4142)${NC}"
+  else
+    echo -e "${RED}✗ Not running${NC}"
+  fi
+
   echo ""
   echo "=== Recent Sessions ==="
   tail -5 "${LOG_FILE}" 2>/dev/null || echo "(no logs yet)"
@@ -300,7 +340,7 @@ _show_status() {
 
 _show_usage() {
   cat << 'EOF'
-Claude Code Multi-Provider Switcher v1.7.0
+Claude Code Multi-Provider Switcher v1.8.0
 
 Usage: claude-switch <mode> [claude args...]
 
@@ -308,6 +348,7 @@ Modes:
   d, direct   Anthropic API direct (best quality, paid)
   c, copilot  GitHub Copilot via copilot-api (free with subscription)
   o, ollama   Local models via Ollama (private, offline)
+  j, junie    JetBrains Junie/Grazie via junie-api (use your Junie subscription)
   s, status   Check all providers status
   -h, --help  Show this help message
 
@@ -315,6 +356,7 @@ Basic Examples:
   claude-switch direct              # Use Anthropic API
   claude-switch copilot             # Use GitHub Copilot
   claude-switch ollama              # Use local Ollama
+  claude-switch junie               # Use JetBrains Junie
   claude-switch copilot -c          # Copilot + resume session
   claude-switch status              # Check what's running
 
@@ -322,6 +364,7 @@ Provider Aliases (recommended):
   alias ccd='claude-switch direct'
   alias ccc='claude-switch copilot'
   alias cco='claude-switch ollama'
+  alias ccj='claude-switch junie'
   alias ccs='claude-switch status'
 
 Dynamic Model Selection:
@@ -334,6 +377,12 @@ Dynamic Model Selection:
   # Switch Ollama models via environment variable
   OLLAMA_MODEL=devstral-64k claude-switch ollama
   OLLAMA_MODEL=ibm/granite4:small-h claude-switch ollama
+
+  # Switch Junie models via environment variable
+  JUNIE_MODEL=google-chat-gemini-pro-2.5 claude-switch junie
+  JUNIE_MODEL=google-chat-gemini-flash-2.5 claude-switch junie
+  JUNIE_MODEL=openai-gpt4.1 claude-switch junie
+  JUNIE_MODEL=claude-sonnet-4-6 claude-switch junie
 
 Model Aliases (for Copilot):
   alias ccc-opus='COPILOT_MODEL=claude-opus-4-6 claude-switch copilot'
@@ -471,9 +520,10 @@ main() {
     d|direct)  _run_direct "$@" ;;
     c|copilot) _run_copilot "$@" ;;
     o|ollama)  _run_ollama "$@" ;;
+    j|junie)   _run_junie "$@" ;;
     s|status)  _show_status ;;
     --shell-config) _print_shell_config ;;
-    -v|--version) echo "claude-switch v1.7.0" ;;
+    -v|--version) echo "claude-switch v1.8.0" ;;
     -h|--help|"") _show_usage ;;
     *)
       _log "ERROR" "Unknown mode: ${mode}"

@@ -61,10 +61,11 @@ body:
       label: Providers Affected
       description: Which providers should support this feature?
       options:
-        - All providers (Direct, Copilot, Ollama)
+        - All providers (Direct, Copilot, Ollama, Junie)
         - Anthropic Direct only
         - GitHub Copilot only
         - Ollama only
+        - Junie (ccj) only
         - Multiple (specify in description)
         - Not applicable
     validations:

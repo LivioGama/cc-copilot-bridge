@@ -17,6 +17,7 @@ body:
         - Anthropic Direct (ccd)
         - GitHub Copilot (ccc)
         - Ollama Local (cco)
+        - Junie (ccj)
         - Multiple providers
         - Provider switching (ccs)
         - Installation / Setup

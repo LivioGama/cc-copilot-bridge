@@ -8,8 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Anthropic Direct**: Official API, best quality
 - **GitHub Copilot**: Free with Copilot Pro+ via copilot-api proxy
 - **Ollama Local**: 100% private, offline capable
+- **JetBrains Junie**: Access to JetBrains AI models (incl. Gemini 2.5 Pro) via junie-api proxy, auth via JetBrains OAuth
 
-The project consists of 3 main bash scripts and extensive documentation for optimal usage.
+The project consists of 3 main bash scripts and extensive documentation for optimal usage. A vendored `junie/` directory contains the Node.js/TypeScript junie-api source ([fabienfleureau/junie-api](https://github.com/fabienfleureau/junie-api)) used by the Junie provider.
 
 ## Core Scripts
 
@@ -20,6 +21,7 @@ Location: `~/bin/claude-switch` (installed via `install.sh`)
 - `_run_direct()`: Anthropic API direct connection
 - `_run_copilot()`: GitHub Copilot via copilot-api proxy (localhost:4141)
 - `_run_ollama()`: Local Ollama models via localhost:11434
+- `_run_junie()`: JetBrains Junie via junie-api proxy (localhost:4142)
 - `_check_port()`: Health checks before launching providers
 - `_get_mcp_flags()`: Dynamic MCP profile selection based on model
 - `_session_start()`/`_session_end()`: Session logging with durations
@@ -35,6 +37,11 @@ DISABLE_NON_ESSENTIAL_MODEL_CALLS="1"
 # Ollama mode
 ANTHROPIC_BASE_URL="http://localhost:11434"
 ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # Ollama ignores this value
+
+# Junie mode
+ANTHROPIC_BASE_URL="http://localhost:4142"
+ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # junie-api ignores this value (uses JetBrains OAuth)
+ANTHROPIC_MODEL="${JUNIE_MODEL:-google-chat-gemini-pro-2.5}"
 ```
 
 **Model Switching:**
@@ -42,6 +49,14 @@ ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # Ollama ignores this value
 - Override via `COPILOT_MODEL` env var (40+ models supported)
 - Default Ollama model: `devstral-small-2` (configurable via `OLLAMA_MODEL`)
 - Backup Ollama model: `ibm/granite4:small-h` (long context, 70% less VRAM)
+- Default Junie model: `google-chat-gemini-pro-2.5` (configurable via `JUNIE_MODEL`)
+
+**Mode/Alias map:**
+- `direct|d` → `ccd` (Anthropic)
+- `copilot|c` → `ccc` (Copilot)
+- `ollama|o` → `cco` (Ollama)
+- `junie|j` → `ccj` (Junie)
+- `status|s` → `ccs` (provider health)
 
 ### 2. install.sh (Installation)
 Auto-installer that:
@@ -57,7 +72,7 @@ Auto-installer that:
 **Quick Reference:**
 ```bash
 # Core providers
-ccd, ccc, cco, ccs
+ccd, ccc, cco, ccj, ccs
 
 # Claude models
 ccc-opus, ccc-sonnet, ccc-haiku
@@ -112,7 +127,13 @@ All sessions logged to `~/.claude/claude-switch.log`:
 Before launching, `claude-switch` verifies:
 - **Copilot**: Port 4141 responds (via `nc -z`)
 - **Ollama**: Port 11434 responds + model exists (`ollama list`)
+- **Junie**: Port 4142 responds (via `nc -z`); requires JetBrains OAuth token
 - **Anthropic**: Uses existing `ANTHROPIC_API_KEY` from environment
+
+### Port Map
+- `4141` — copilot-api (GitHub Copilot proxy)
+- `4142` — junie-api (JetBrains Junie proxy). **Note:** junie-api's upstream default port is `4141`; the bridge overrides it to `4142` so both proxies can coexist.
+- `11434` — Ollama local server
 
 ### Model Compatibility Matrix
 
@@ -127,6 +148,7 @@ Before launching, `claude-switch` verifies:
 | Copilot-Grok | /chat/completions | grok-code-fast-1 | ✅ Compatible |
 | Copilot-Codex | /responses | gpt-*-codex | ✅ Tested (via unified fork) |
 | Ollama | Native | devstral, granite4, qwen3-coder | 100% (permissive) |
+| Junie | /v1/messages (Anthropic-compat) | google-chat-gemini-pro-2.5 (default), JetBrains AI catalog | ~80% (Gemini strict validation) |
 
 **Unified Fork (PR #167 + #170) - RECOMMENDED:**
 
@@ -292,6 +314,22 @@ brew services restart ollama
 ollama pull devstral-small-2
 # Create 64K Modelfile (see Performance Considerations section)
 OLLAMA_MODEL=devstral-64k cco
+
+# Test Junie (requires junie-api running on :4142 + JetBrains OAuth)
+cd junie && bun install && bun start -- --port 4142  # In separate terminal
+ccj
+# Default model: google-chat-gemini-pro-2.5 (override via JUNIE_MODEL)
+```
+
+### Working on the Vendored junie-api
+The `junie/` directory is a **standalone Node.js/TypeScript project** with its own `package.json` and test suite. The main `cc-copilot-bridge` repo is Bash-based; junie is optional and independently buildable.
+
+```bash
+cd junie
+bun install
+bun test       # Run junie-api's test suite
+bun run build  # Build TypeScript
+bun start      # Start proxy (bridge defaults it to port 4142)
 ```
 
 ### Debugging Session Issues
@@ -301,6 +339,7 @@ tail -20 ~/.claude/claude-switch.log
 
 # Check provider health
 nc -z localhost 4141  # Copilot
+nc -z localhost 4142  # Junie
 nc -z localhost 11434 # Ollama
 curl -s https://api.anthropic.com/v1/messages # Anthropic
 
@@ -310,6 +349,7 @@ grep "Session ended" ~/.claude/claude-switch.log
 # Filter by provider
 grep "mode=copilot" ~/.claude/claude-switch.log
 grep "mode=ollama" ~/.claude/claude-switch.log
+grep "mode=junie" ~/.claude/claude-switch.log
 ```
 
 ### Model Switching Commands
@@ -431,6 +471,7 @@ pwd  # Verify you're in /Users/florianbruniaux/Sites/perso/cc-copilot-bridge
 - `~/.claude/mcp-profiles/excludes.yaml` - Add problematic MCP servers
 - `~/.claude/claude_desktop_config.json` - Base MCP configuration
 - `~/bin/claude-switch` - Script modifications
+- `junie/` - Vendored junie-api source (TypeScript/Node.js); standalone project with its own `package.json` — edit only when patching the Junie proxy
 
 ### Documentation structure:
 - `README.md` - Complete documentation
@@ -456,6 +497,7 @@ pwd  # Verify you're in /Users/florianbruniaux/Sites/perso/cc-copilot-bridge
 | Offline work | `cco` | No internet required |
 | Best agentic local | `cco-devstral` | Devstral-small-2 (68% SWE-bench) |
 | Long context local | `cco-granite` | Granite4 (70% less VRAM) |
+| JetBrains AI subscription | `ccj` | Use existing JetBrains AI quota (Gemini 2.5 Pro default) |
 
 ## Package Managers Distribution
 
@@ -881,17 +923,25 @@ Actuellement Gemini 3 Preview:
 ## Testing Changes
 
 When modifying `claude-switch`:
-1. Test with all 3 providers (`ccd`, `ccc`, `cco`)
+1. Test with all 4 providers (`ccd`, `ccc`, `cco`, `ccj`)
 2. Check session logs: `tail ~/.claude/claude-switch.log`
 3. Verify health checks: `ccs`
-4. Test model switching: `COPILOT_MODEL=<model> ccc`
+4. Test model switching: `COPILOT_MODEL=<model> ccc`, `JUNIE_MODEL=<model> ccj`
 5. Test error handling: Stop provider and try launching
 
 ## Notes for AI Assistants
 
 - All bash scripts use `set -euo pipefail` for safety
-- Port conflicts: Copilot (4141), Ollama (11434)
+- Port conflicts: Copilot (4141), Junie (4142), Ollama (11434)
 - Session tracking via log file enables usage analytics
 - MCP profiles prevent runtime errors with strict validation models
 - Default models chosen for best quality/speed balance
 - Logs are append-only, consider rotation for long-term use
+
+## Risks & Caveats: Junie Provider
+
+- **Reverse-engineered**: junie-api is a community reverse-engineered proxy to the JetBrains AI / Junie backend; it is not an official JetBrains product and may break without notice when JetBrains changes its internal APIs.
+- **ToS**: Usage is subject to the JetBrains AI Terms of Service; programmatic access via third-party proxies may not be explicitly permitted — use at your own risk and only with a valid JetBrains AI subscription.
+- **Auth**: Requires a JetBrains OAuth token (obtained via the junie-api auth flow); no Anthropic/OpenAI API key is used.
+- **Port override**: junie-api's upstream default is `4141`, which collides with copilot-api. The bridge launches it on `4142`; if you run junie-api outside claude-switch, pass `--port 4142` explicitly.
+- **Stability tier**: Treat Junie as experimental — prefer `ccd`/`ccc` for production work.

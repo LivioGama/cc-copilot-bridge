@@ -1,10 +1,10 @@
 class CcCopilotBridge < Formula
   desc "Multi-provider switcher for Claude Code CLI"
   homepage "https://github.com/FlorianBruniaux/cc-copilot-bridge"
-  url "https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/download/v1.7.0/cc-copilot-bridge-1.7.0.tar.gz"
-  sha256 "8c89eb20a227f9bddb149a0774d4bc6282cad6e748111f53257f1916f3b6eadb"
+  url "https://github.com/FlorianBruniaux/cc-copilot-bridge/releases/download/v1.8.0/cc-copilot-bridge-1.8.0.tar.gz"
+  sha256 "8c89eb20a227f9bddb149a0774d4bc6282cad6e748111f53257f1916f3b6eadb" # TODO: regenerate for v1.8.0 release tarball
   license "MIT"
-  version "1.7.0"
+  version "1.8.0"
 
   depends_on "netcat"
 
@@ -36,6 +36,8 @@ class CcCopilotBridge < Formula
 
       For more integration options:
         https://github.com/FlorianBruniaux/cc-copilot-bridge/blob/main/docs/INSTALL-OPTIONS.md
+
+      For JetBrains Junie: npx junie-api auth && npx junie-api start --port 4142
 
       Logs are stored in:
         #{var}/log/claude-switch/claude-switch.log
