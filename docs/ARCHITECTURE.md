@@ -30,7 +30,7 @@ cc-copilot-bridge is a **routing layer** that sits between Claude Code CLI and m
 │                     (Terminal Commands)                          │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
-                    Aliases (ccd, ccc, cco)
+                 Aliases (ccd, ccc, cco, ccoc)
                              │
 ┌────────────────────────────▼─────────────────────────────────────┐
 │                       claude-switch                              │
@@ -42,34 +42,51 @@ cc-copilot-bridge is a **routing layer** that sits between Claude Code CLI and m
 │  └──────────────┘  └───────────────┘  └────────────────────┘  │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
-              ┌──────────────┼──────────────┐
-              │              │              │
-    ┌─────────▼────┐  ┌─────▼─────┐  ┌────▼─────┐
-    │   Direct     │  │  Copilot  │  │  Ollama  │
-    │   Provider   │  │  Provider │  │ Provider │
-    └─────────┬────┘  └─────┬─────┘  └────┬─────┘
-              │              │              │
-    ┌─────────▼────┐  ┌─────▼─────┐  ┌────▼─────┐
-    │  Anthropic   │  │ copilot-  │  │  Ollama  │
-    │     API      │  │    api    │  │  Server  │
-    └──────────────┘  └─────┬─────┘  └──────────┘
-                            │
-                     ┌──────▼───────┐
-                     │GitHub Copilot│
-                     │   Backend    │
-                     └──────────────┘
+       ┌─────────────┬───────┴───────┬─────────────┐
+       │             │               │             │
+ ┌─────▼────┐  ┌────▼─────┐  ┌─────▼─────┐  ┌────▼──────┐
+ │  Direct  │  │ Copilot  │  │  Ollama   │  │  Ollama   │
+ │ Provider │  │ Provider │  │  Local    │  │  Cloud    │
+ └─────┬────┘  └────┬─────┘  │ Provider  │  │ Provider  │
+       │            │        └─────┬─────┘  └─────┬─────┘
+       │            │              │              │
+ ┌─────▼────┐  ┌───▼─────┐  ┌─────▼─────┐  ┌─────▼──────┐
+ │Anthropic │  │copilot- │  │  Ollama   │  │ Ollama.com │
+ │   API    │  │   api   │  │  Server   │  │   Remote   │
+ │ (HTTPS)  │  │(:4141)  │  │(:11434)   │  │ (HTTPS)    │
+ └──────────┘  └───┬─────┘  └───────────┘  │ Bearer Auth│
+                   │                        └────────────┘
+            ┌──────▼───────┐                      │
+            │GitHub Copilot│              ┌───────▼────────┐
+            │   Backend    │              │ gpt-oss        │
+            └──────────────┘              │ deepseek-v3.1  │
+                                          │ qwen3-coder    │
+                                          └────────────────┘
 ```
+
+**Provider Distinction** (Ollama Local vs Ollama Cloud):
+
+| Aspect | Ollama Local (`cco`) | Ollama Cloud (`ccoc`) |
+|--------|---------------------|------------------------|
+| **Endpoint** | `http://localhost:11434` | `https://ollama.com/api` |
+| **Auth** | None (localhost) | Bearer token (`OLLAMA_API_KEY`) |
+| **Privacy** | 100% local (no data egress) | Remote (data sent to Ollama Cloud) |
+| **Models** | devstral-small-2, granite4, qwen3-coder | gpt-oss, deepseek-v3.1, qwen3-coder |
+| **Offline capable** | ✅ Yes | ❌ No (requires internet) |
+| **Hardware** | Local CPU/GPU | Cloud-hosted inference |
+| **Latency** | Depends on local hardware | Network round-trip + cloud inference |
 
 ### 1.2 Component Responsibilities
 
 | Component | Responsibility | Key Functions |
 |-----------|----------------|---------------|
-| **claude-switch** | Main orchestrator, provider routing | `main()`, `_run_direct()`, `_run_copilot()`, `_run_ollama()` |
-| **Health Check System** | Pre-flight validation | `_check_port()`, `_check_copilot()`, `_check_ollama()` |
+| **claude-switch** | Main orchestrator, provider routing | `main()`, `_run_direct()`, `_run_copilot()`, `_run_ollama()`, `_run_ollama_cloud()` |
+| **Health Check System** | Pre-flight validation | `_check_port()`, `_check_copilot()`, `_check_ollama()`, `_check_ollama_cloud()` |
 | **MCP Profiles Manager** | Model-specific MCP configuration | `_get_mcp_flags()`, `_get_system_prompt()` |
 | **Session Tracker** | Logging and audit trail | `_session_start()`, `_session_end()`, `_log()` |
 | **copilot-api** | Anthropic API → GitHub Copilot bridge | External proxy service |
-| **Ollama** | Local inference engine | External service |
+| **Ollama (Local)** | Local inference engine | External service (localhost) |
+| **Ollama Cloud** | Remote inference via ollama.com | External HTTPS service with Bearer auth |
 
 ### 1.3 Key Design Principles
 
@@ -224,7 +241,89 @@ _run_ollama() {
 - Explicitly specifies model via `--model` flag
 - Auth token is ignored by Ollama (no authentication required)
 
-### 2.5 Port Forwarding Mechanism
+### 2.5 Provider Implementation: Ollama Cloud
+
+**Execution Flow**:
+```
+ccoc [args] → _check_ollama_cloud() → set env vars (Bearer token) →
+exec claude --model <cloud-model> [args]
+```
+
+**Implementation**:
+```bash
+_run_ollama_cloud() {
+  _check_ollama_cloud || return 1  # Verify API key + endpoint reachability
+
+  local model="${OLLAMA_CLOUD_MODEL:-gpt-oss}"
+
+  _log "INFO" "Provider: Ollama Cloud - Model: ${model}"
+  echo -e "${CYAN}━━━ Claude Code [Ollama Cloud: ${model}] ━━━${NC}"
+
+  # Configure remote Ollama Cloud endpoint
+  export ANTHROPIC_BASE_URL="https://ollama.com/api"
+  export ANTHROPIC_AUTH_TOKEN="${OLLAMA_API_KEY}"  # Bearer token
+  export ANTHROPIC_MODEL="${model}"
+
+  _session_start "ollama-cloud:${model}"
+  claude --model "${model}" "$@"
+  local rc=$?
+  _session_end $rc
+  return $rc
+}
+```
+
+**Key Differences from Local Ollama**:
+
+| Aspect | Ollama Local | Ollama Cloud |
+|--------|--------------|--------------|
+| Endpoint | `http://localhost:11434` | `https://ollama.com/api` |
+| Protocol | HTTP (local) | HTTPS (remote) |
+| Authentication | None | Bearer token (`OLLAMA_API_KEY`) |
+| Model catalog | Local pulls (`ollama pull`) | Cloud-hosted (no pull required) |
+| Privacy | 100% local | Data sent to Ollama Cloud |
+
+**Environment Variables**:
+
+| Variable | Purpose | Value |
+|----------|---------|-------|
+| `ANTHROPIC_BASE_URL` | Redirect to Ollama Cloud | `https://ollama.com/api` |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer auth for cloud API | `${OLLAMA_API_KEY}` |
+| `ANTHROPIC_MODEL` | Cloud model selection | `gpt-oss`, `deepseek-v3.1`, `qwen3-coder` |
+| `OLLAMA_API_KEY` | User-configured cloud API key | From `~/.zshrc` or shell env |
+| `OLLAMA_CLOUD_MODEL` | Override default cloud model | Optional, defaults to `gpt-oss` |
+
+**Available Cloud Models** (as of 2026-04-16):
+
+| Model | Use Case | Notes |
+|-------|----------|-------|
+| `gpt-oss` | Default, general coding | Open-weight GPT alternative |
+| `deepseek-v3.1` | Reasoning, complex tasks | DeepSeek's frontier model |
+| `qwen3-coder` | Code-specific tasks | Alibaba Qwen 3 Coder variant |
+
+**Health Check Implementation**:
+```bash
+_check_ollama_cloud() {
+  # 1. Verify API key is set
+  if [[ -z "${OLLAMA_API_KEY:-}" ]]; then
+    _log "ERROR" "OLLAMA_API_KEY not set"
+    echo "  Get your key: https://ollama.com/settings/api_keys"
+    echo "  Then: export OLLAMA_API_KEY=your_key"
+    return 1
+  fi
+
+  # 2. Verify cloud endpoint reachable
+  if ! curl -s -o /dev/null -w "%{http_code}" \
+    https://ollama.com/api/tags -H "Authorization: Bearer ${OLLAMA_API_KEY}" \
+    --max-time 5 | grep -q "200\|401"; then
+    _log "ERROR" "Cannot reach ollama.com (network issue?)"
+    return 1
+  fi
+
+  _log "INFO" "Ollama Cloud health: OK"
+}
+```
+
+### 2.6 Port Forwarding Mechanism
 
 **Health Check Implementation**:
 ```bash
@@ -264,10 +363,11 @@ _check_ollama() {
 | Service | Port | Protocol | Rationale |
 |---------|------|----------|-----------|
 | copilot-api | 4141 | HTTP | Default port from copilot-api project |
-| Ollama | 11434 | HTTP | Ollama's standard OpenAI-compatible endpoint |
+| Ollama Local | 11434 | HTTP | Ollama's standard OpenAI-compatible endpoint |
 | Anthropic API | 443 | HTTPS | Standard HTTPS (api.anthropic.com) |
+| Ollama Cloud | 443 | HTTPS | Remote inference (ollama.com/api) |
 
-### 2.6 Sequence Diagram: Copilot Provider
+### 2.7 Sequence Diagram: Copilot Provider
 
 ```
 User          claude-switch      copilot-api      GitHub Copilot
@@ -1222,7 +1322,9 @@ _diagnose_mcp_schemas() {
 | `DISABLE_NON_ESSENTIAL_MODEL_CALLS` | Traffic optimization | claude-switch | claude CLI |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | Further optimization | claude-switch | claude CLI |
 | `COPILOT_MODEL` | Override default model | User/Alias | claude-switch |
-| `OLLAMA_MODEL` | Override default Ollama model | User/Alias | claude-switch |
+| `OLLAMA_MODEL` | Override default Ollama Local model | User/Alias | claude-switch |
+| `OLLAMA_API_KEY` | Ollama Cloud Bearer token | User (shell profile) | claude-switch |
+| `OLLAMA_CLOUD_MODEL` | Override default Ollama Cloud model | User/Alias | claude-switch |
 | `CLAUDE_SESSION_START` | Session start timestamp | claude-switch | claude-switch |
 | `CLAUDE_SESSION_MODE` | Current provider mode | claude-switch | claude-switch |
 
@@ -1257,7 +1359,8 @@ _diagnose_mcp_schemas() {
 |---------|-------|----------|---------------|
 | `claude-switch direct` | `ccd` | Anthropic | claude-sonnet-4-6 |
 | `claude-switch copilot` | `ccc` | Copilot | claude-sonnet-4-6 |
-| `claude-switch ollama` | `cco` | Ollama | devstral-small-2 |
+| `claude-switch ollama` | `cco` | Ollama Local | devstral-small-2 |
+| `claude-switch ollama-cloud` | `ccoc` | Ollama Cloud | gpt-oss |
 | `claude-switch status` | `ccs` | N/A | N/A |
 | N/A | `ccc-opus` | Copilot | claude-opus-4-6 |
 | N/A | `ccc-sonnet` | Copilot | claude-sonnet-4-6 |
@@ -1303,5 +1406,5 @@ cc-copilot-bridge implements a **zero-configuration routing layer** that enables
 
 **Maintenance Notes**:
 - This document reflects cc-copilot-bridge v1.7.0
-- Architecture unchanged since v1.0.0 (MCP Profiles added in v1.1.0, Ollama model updated to devstral-small-2 in v1.4.0)
+- Architecture unchanged since v1.0.0 (MCP Profiles added in v1.1.0, Ollama model updated to devstral-small-2 in v1.4.0, Ollama Cloud provider added in v1.8.0)
 - Next major version (v2.0.0) will introduce automatic MCP schema fixing

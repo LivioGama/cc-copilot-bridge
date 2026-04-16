@@ -144,6 +144,180 @@ ollama ps
 
 ---
 
+## ☁️ Ollama Cloud Issues
+
+Ollama Cloud (`ccoc`) uses a remote HTTPS endpoint at `https://ollama.com/api` with Bearer token authentication. Common issues are related to API keys, authentication, model availability, network connectivity, and rate limits.
+
+> See [CLAUDE.md](../CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md#25-provider-implementation-ollama-cloud) for the full Ollama Cloud provider details.
+
+### Issue: `OLLAMA_API_KEY not set`
+
+**Symptom**:
+```bash
+ccoc
+ERROR: OLLAMA_API_KEY not set
+  Get your key: https://ollama.com/settings/api_keys
+  Then: export OLLAMA_API_KEY=your_key
+```
+
+**Cause**: The `OLLAMA_API_KEY` environment variable is required to authenticate with Ollama Cloud's remote API, but it was not found in the shell environment.
+
+**Solution**:
+1. Generate an API key at [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys).
+2. Add it to your shell profile (persistent):
+   ```bash
+   # ~/.zshrc or ~/.bashrc
+   export OLLAMA_API_KEY="your_key_here"
+   ```
+3. Reload the shell:
+   ```bash
+   source ~/.zshrc   # or ~/.bashrc
+   ```
+4. Verify:
+   ```bash
+   echo $OLLAMA_API_KEY | head -c 10  # Should print first 10 chars
+   ccoc
+   ```
+
+### Issue: Bearer token authentication failed
+
+**Symptom**:
+```bash
+ccoc
+API Error: 401 Unauthorized
+{"error":{"message":"Invalid authentication credentials"}}
+```
+
+**Cause**: The API key is invalid, expired, or was revoked on the Ollama Cloud dashboard.
+
+**Solution**:
+1. Verify the key is valid at [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys).
+2. If revoked, generate a new one and replace the old value in your shell profile:
+   ```bash
+   export OLLAMA_API_KEY="new_key_here"
+   ```
+3. Test manually with `curl`:
+   ```bash
+   curl -s https://ollama.com/api/tags \
+     -H "Authorization: Bearer ${OLLAMA_API_KEY}" | head
+   # Expected: JSON list of available models
+   # If 401: key is still invalid → regenerate
+   ```
+4. Reload shell and retry `ccoc`.
+
+### Issue: Model not found / 404 error
+
+**Symptom**:
+```bash
+ccoc
+API Error: 404 Not Found
+{"error":{"message":"model 'gpt-oss' not found"}}
+```
+
+**Cause**: The requested model name is wrong, deprecated, or unavailable on your billing tier.
+
+**Solution**:
+1. List available models with your API key:
+   ```bash
+   curl -s https://ollama.com/api/tags \
+     -H "Authorization: Bearer ${OLLAMA_API_KEY}" | jq -r '.models[].name'
+   ```
+2. Verify your billing tier supports the model at [ollama.com/settings/billing](https://ollama.com/settings/billing).
+3. Use a supported default model explicitly:
+   ```bash
+   OLLAMA_CLOUD_MODEL=gpt-oss ccoc
+   OLLAMA_CLOUD_MODEL=deepseek-v3.1 ccoc
+   OLLAMA_CLOUD_MODEL=qwen3-coder ccoc
+   ```
+4. If the model was recently deprecated, consult [ollama.com/library](https://ollama.com/library) for its replacement.
+
+### Issue: Request timeout / network error
+
+**Symptom**:
+```bash
+ccoc
+ERROR: Cannot reach ollama.com (network issue?)
+# OR
+API Error: Connection timed out after 30s
+```
+
+**Cause**: No internet connectivity, DNS resolution failure, firewall blocking outbound HTTPS (443), or an ollama.com outage.
+
+**Solution**:
+1. Check internet connectivity:
+   ```bash
+   ping -c 3 ollama.com
+   curl -I https://ollama.com
+   ```
+2. Verify DNS resolution:
+   ```bash
+   dig ollama.com  # Should return an A record
+   ```
+3. Confirm HTTPS (443) is not blocked by a corporate firewall or VPN:
+   ```bash
+   nc -zv ollama.com 443
+   ```
+4. Check [ollama.com status page](https://status.ollama.com) (if available) for ongoing outages.
+5. As a fallback, switch to **local Ollama** (offline capable):
+   ```bash
+   cco  # Uses localhost:11434 with a local model
+   ```
+
+### Issue: Rate limit exceeded
+
+**Symptom**:
+```bash
+ccoc
+API Error: 429 Too Many Requests
+{"error":{"message":"Rate limit exceeded. Please try again later."}}
+```
+
+**Cause**: The monthly request quota or per-minute rate limit for your tier has been reached.
+
+**Solution**:
+1. Check usage at [ollama.com/settings/billing](https://ollama.com/settings/billing).
+2. Wait for the quota window to reset (per-minute limits usually reset within 60s; monthly quotas reset on the billing anniversary).
+3. Upgrade your tier if you regularly hit limits.
+4. As a short-term workaround, switch to another provider:
+   ```bash
+   ccc-sonnet  # Copilot (free with Copilot Pro+ subscription)
+   cco         # Ollama Local (unlimited, offline)
+   ccd         # Anthropic Direct (paid)
+   ```
+5. For expensive experimentation, prefer **Ollama Local** (`cco`) to avoid hitting cloud quotas.
+
+### Issue: Endpoint changed / using an alternate Ollama-compatible backend
+
+**Symptom**: You need to point `ccoc` at a self-hosted or alternate Ollama-compatible endpoint (e.g., a mirror, an on-prem gateway, or a migrated Ollama Cloud URL) instead of the default `https://ollama.com/api`.
+
+**Cause**: The default endpoint is hardcoded to `https://ollama.com/api`, but the bridge supports an override via the `OLLAMA_API_ENDPOINT` environment variable (see [CLAUDE.md](../CLAUDE.md)).
+
+**Solution**:
+1. Export `OLLAMA_API_ENDPOINT` before launching `ccoc`:
+   ```bash
+   export OLLAMA_API_ENDPOINT="https://your-ollama-mirror.example.com/api"
+   export OLLAMA_API_KEY="your_key_here"  # still required for Bearer auth
+   ccoc
+   ```
+2. Persist in shell profile if you use it regularly:
+   ```bash
+   # ~/.zshrc or ~/.bashrc
+   export OLLAMA_API_ENDPOINT="https://your-ollama-mirror.example.com/api"
+   ```
+3. Verify reachability before launching:
+   ```bash
+   curl -sfI "${OLLAMA_API_ENDPOINT:-https://ollama.com/api}"
+   # Expect: HTTP/2 200 or 204
+   ```
+4. To revert to the default endpoint, unset the variable:
+   ```bash
+   unset OLLAMA_API_ENDPOINT
+   ccoc
+   ```
+5. **Note**: The alternate endpoint must be Ollama-API compatible (same routes and Bearer auth scheme). An OpenAI-compatible or proprietary endpoint will not work with `ccoc`.
+
+---
+
 ## ❌ Model Not Found Error
 
 ### Symptom

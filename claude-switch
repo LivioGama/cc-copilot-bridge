@@ -1,8 +1,8 @@
 #!/bin/bash
 # Claude Code Multi-Provider Switcher
 # Usage: claude-switch <mode> [claude args...]
-# Modes: direct (d), copilot (c), ollama (o), status (s)
-# Version: 1.7.0 - Models update: Claude Sonnet/Opus 4.6, GPT-5.3-Codex, Grok Code Fast 1, Ollama 0.15.3
+# Modes: direct (d), copilot (c), ollama (o), junie (j), status (s)
+# Version: 1.8.0 - Junie provider added (JetBrains Junie/Grazie via junie-api on :4142)
 
 set -euo pipefail
 
@@ -71,6 +71,16 @@ _check_ollama() {
     return 1
   fi
   _log "INFO" "Ollama health: OK (model: ${model})"
+}
+
+_check_junie() {
+  if ! _check_port "localhost" "4142"; then
+    _log "ERROR" "junie-api not running on :4142"
+    echo "  Start it with: bunx junie-api start --port 4142"
+    echo "  First run:     bunx junie-api auth"
+    return 1
+  fi
+  _log "INFO" "junie-api health: OK"
 }
 
 # === Session Tracking ===
@@ -154,6 +164,42 @@ _set_prompt_args() {
   # Set array elements (proper bash array, handles newlines and special chars)
   PROMPT_ARGS=("--append-system-prompt" "${prompt_content}")
   _log "INFO" "Injecting model identity prompt for ${model}"
+}
+
+# === Ollama Cloud Health Check ===
+_check_ollama_cloud() {
+  local api_key="${OLLAMA_API_KEY:-}"
+  local endpoint="${OLLAMA_API_ENDPOINT:-https://ollama.com}"
+
+  if [[ -z "$api_key" ]]; then
+    _log "ERROR" "OLLAMA_API_KEY not set. Get a key at https://ollama.com/settings/api_keys and set it with: export OLLAMA_API_KEY=<your-key>"
+    return 1
+  fi
+
+  # Bearer token health check to /api/chat endpoint (authenticated, unlike /api/tags which is public)
+  local http_code=$(curl -s --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${api_key}" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"test","messages":[]}' \
+    "${endpoint%/}/api/chat" 2>/dev/null)
+
+  # 200/400/422 = server reachable, auth valid (400/422 = bad request, which is fine for health)
+  # 401/403 = auth invalid
+  # 0 = network error (timeout, DNS, etc.)
+  case "${http_code}" in
+    200|400|422)
+      _log "INFO" "ollama-cloud health: OK"
+      return 0
+      ;;
+    401|403)
+      _log "ERROR" "ollama-cloud auth failed: invalid or expired API key (verify at https://ollama.com/settings/api_keys)"
+      return 1
+      ;;
+    *)
+      _log "ERROR" "ollama-cloud health check failed (endpoint unreachable, HTTP ${http_code})"
+      return 1
+      ;;
+  esac
 }
 
 # === Ollama Context Check ===
@@ -267,6 +313,82 @@ _run_ollama() {
   return $rc
 }
 
+_run_junie() {
+  _check_junie || return 1
+
+  # Allow model override via env var or use default
+  local model="${JUNIE_MODEL:-google-chat-gemini-pro-2.5}"
+
+  _log "INFO" "Provider: JetBrains Junie (via junie-api) - Model: ${model}"
+  echo -e "${BLUE}━━━ Claude Code [JetBrains Junie: ${model}] ━━━${NC}"
+
+  export ANTHROPIC_BASE_URL="http://localhost:4142"
+  export ANTHROPIC_AUTH_TOKEN="dummy"  # junie-api ignores this value
+  export ANTHROPIC_MODEL="${model}"
+  export ANTHROPIC_SMALL_FAST_MODEL="google-chat-gemini-flash-2.5"
+  export DISABLE_NON_ESSENTIAL_MODEL_CALLS="1"
+  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+
+  _session_start "junie:${model}"
+  claude "$@"
+  local rc=$?
+  _session_end $rc
+  return $rc
+}
+
+_run_ollama_cloud_proxy() {
+  # Launch the auth header conversion proxy for Ollama Cloud.
+  # This converts Claude Code's x-api-key format to Ollama Cloud's Bearer auth.
+  local port="${1:-4143}"
+  local upstream="${OLLAMA_API_ENDPOINT:-https://ollama.com}"
+
+  _log "INFO" "Starting Ollama Cloud auth proxy on port ${port} (upstream: ${upstream})"
+  echo -e "${BLUE}━━━ Ollama Cloud Auth Proxy ━━━${NC}"
+  echo "Listening on http://localhost:${port}"
+  echo ""
+  echo "In another terminal, use:"
+  echo "  ANTHROPIC_BASE_URL=http://localhost:${port} ccoc"
+  echo ""
+  echo "Press Ctrl+C to stop"
+  echo ""
+
+  # Use bun to run the TypeScript proxy
+  if ! command -v bun &>/dev/null; then
+    _log "ERROR" "bun is required to run the proxy. Install with: curl -fsSL https://bun.sh/install | bash"
+    return 1
+  fi
+
+  bun run "$(dirname "$0")/scripts/ollama-cloud-proxy.ts" --port "$port" --upstream "$upstream"
+}
+
+_run_ollama_cloud() {
+  _check_ollama_cloud || return 1
+
+  local model="${OLLAMA_CLOUD_MODEL:-gpt-oss:120b}"
+  local endpoint="${ANTHROPIC_BASE_URL:-${OLLAMA_API_ENDPOINT:-https://ollama.com}}"
+
+  # Detect if using the proxy (http://localhost:*) or direct endpoint
+  local auth_mode="bearer"
+  if [[ "$endpoint" == http://localhost:* ]]; then
+    auth_mode="proxy"
+  fi
+
+  _log "INFO" "Provider: Ollama Cloud - Model: ${model} [auth: ${auth_mode}]"
+  echo -e "${BLUE}━━━ Claude Code [Ollama Cloud: ${model}] ━━━${NC}"
+
+  export ANTHROPIC_BASE_URL="${endpoint%/}"
+  export ANTHROPIC_AUTH_TOKEN="${OLLAMA_API_KEY}"
+  export ANTHROPIC_MODEL="${model}"
+  export DISABLE_NON_ESSENTIAL_MODEL_CALLS="1"
+  export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+
+  _session_start "ollama-cloud:${model}"
+  claude "$@"
+  local rc=$?
+  _session_end $rc
+  return $rc
+}
+
 _show_status() {
   echo "=== Claude Code Provider Status ==="
   echo ""
@@ -293,6 +415,20 @@ _show_status() {
     echo -e "${RED}✗ Not running${NC}"
   fi
 
+  echo -n "Junie API:      "
+  if _check_port "localhost" "4142"; then
+    echo -e "${GREEN}✓ Running (:4142)${NC}"
+  else
+    echo -e "${RED}✗ Not running${NC}"
+  fi
+
+  echo -n "Ollama Cloud:   "
+  if _check_ollama_cloud 2>/dev/null; then
+    echo -e "${GREEN}✓ Authenticated${NC}"
+  else
+    echo -e "${RED}✗ Offline/Auth Failed${NC}"
+  fi
+
   echo ""
   echo "=== Recent Sessions ==="
   tail -5 "${LOG_FILE}" 2>/dev/null || echo "(no logs yet)"
@@ -300,28 +436,45 @@ _show_status() {
 
 _show_usage() {
   cat << 'EOF'
-Claude Code Multi-Provider Switcher v1.7.0
+Claude Code Multi-Provider Switcher v1.8.0
 
 Usage: claude-switch <mode> [claude args...]
 
 Modes:
-  d, direct   Anthropic API direct (best quality, paid)
-  c, copilot  GitHub Copilot via copilot-api (free with subscription)
-  o, ollama   Local models via Ollama (private, offline)
-  s, status   Check all providers status
-  -h, --help  Show this help message
+  d, direct          Anthropic API direct (best quality, paid)
+  c, copilot         GitHub Copilot via copilot-api (free with subscription)
+  o, ollama          Local models via Ollama (private, offline)
+  cl, cloud          Remote Ollama Cloud (managed, fixed monthly billing)
+  cp, cloud-proxy    Ollama Cloud proxy (fixes auth header format for Claude Code v2.1.x)
+  j, junie           JetBrains Junie/Grazie via junie-api (use your Junie subscription)
+  s, status          Check all providers status
+  -h, --help         Show this help message
 
 Basic Examples:
   claude-switch direct              # Use Anthropic API
   claude-switch copilot             # Use GitHub Copilot
   claude-switch ollama              # Use local Ollama
+  claude-switch cloud               # Use Ollama Cloud (requires OLLAMA_API_KEY)
+  claude-switch cloud-proxy --port 4143  # Start Ollama Cloud auth proxy (Terminal 1)
+  claude-switch junie               # Use JetBrains Junie
   claude-switch copilot -c          # Copilot + resume session
   claude-switch status              # Check what's running
+
+Ollama Cloud Auth Proxy (for Claude Code v2.1.x compatibility):
+  Terminal 1 - Start proxy:
+    claude-switch cloud-proxy --port 4143
+
+  Terminal 2 - Use via proxy:
+    export ANTHROPIC_BASE_URL=http://localhost:4143
+    export OLLAMA_API_KEY=<your-key>
+    ccoc -p "What is 2+2?"
 
 Provider Aliases (recommended):
   alias ccd='claude-switch direct'
   alias ccc='claude-switch copilot'
   alias cco='claude-switch ollama'
+  alias ccoc='claude-switch cloud'
+  alias ccj='claude-switch junie'
   alias ccs='claude-switch status'
 
 Dynamic Model Selection:
@@ -334,6 +487,17 @@ Dynamic Model Selection:
   # Switch Ollama models via environment variable
   OLLAMA_MODEL=devstral-64k claude-switch ollama
   OLLAMA_MODEL=ibm/granite4:small-h claude-switch ollama
+
+  # Switch Junie models via environment variable
+  JUNIE_MODEL=google-chat-gemini-pro-2.5 claude-switch junie
+  JUNIE_MODEL=google-chat-gemini-flash-2.5 claude-switch junie
+  JUNIE_MODEL=openai-gpt4.1 claude-switch junie
+  JUNIE_MODEL=claude-sonnet-4-6 claude-switch junie
+
+  # Switch Ollama Cloud models via environment variable (requires OLLAMA_API_KEY)
+  OLLAMA_CLOUD_MODEL=gpt-oss:120b claude-switch cloud
+  OLLAMA_CLOUD_MODEL=deepseek-v3.1:671b claude-switch cloud
+  OLLAMA_CLOUD_MODEL=qwen3-coder:480b claude-switch cloud
 
 Model Aliases (for Copilot):
   alias ccc-opus='COPILOT_MODEL=claude-opus-4-6 claude-switch copilot'
@@ -468,12 +632,15 @@ main() {
   shift 2>/dev/null || true
 
   case "${mode}" in
-    d|direct)  _run_direct "$@" ;;
-    c|copilot) _run_copilot "$@" ;;
-    o|ollama)  _run_ollama "$@" ;;
-    s|status)  _show_status ;;
+    d|direct)     _run_direct "$@" ;;
+    c|copilot)    _run_copilot "$@" ;;
+    o|ollama)     _run_ollama "$@" ;;
+    cl|cloud)     _run_ollama_cloud "$@" ;;
+    cp|cloud-proxy) _run_ollama_cloud_proxy "$@" ;;
+    j|junie)      _run_junie "$@" ;;
+    s|status)     _show_status ;;
     --shell-config) _print_shell_config ;;
-    -v|--version) echo "claude-switch v1.7.0" ;;
+    -v|--version) echo "claude-switch v1.8.0" ;;
     -h|--help|"") _show_usage ;;
     *)
       _log "ERROR" "Unknown mode: ${mode}"

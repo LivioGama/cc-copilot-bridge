@@ -8,8 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Anthropic Direct**: Official API, best quality
 - **GitHub Copilot**: Free with Copilot Pro+ via copilot-api proxy
 - **Ollama Local**: 100% private, offline capable
+- **Ollama Cloud**: Managed Ollama models via `https://ollama.com` (Bearer auth, fixed monthly billing)
+- **JetBrains Junie**: Access to JetBrains AI models (incl. Gemini 2.5 Pro) via junie-api proxy, auth via JetBrains OAuth
 
-The project consists of 3 main bash scripts and extensive documentation for optimal usage.
+The project consists of 3 main bash scripts and extensive documentation for optimal usage. A vendored `junie/` directory contains the Node.js/TypeScript junie-api source ([fabienfleureau/junie-api](https://github.com/fabienfleureau/junie-api)) used by the Junie provider.
 
 ## Core Scripts
 
@@ -20,9 +22,21 @@ Location: `~/bin/claude-switch` (installed via `install.sh`)
 - `_run_direct()`: Anthropic API direct connection
 - `_run_copilot()`: GitHub Copilot via copilot-api proxy (localhost:4141)
 - `_run_ollama()`: Local Ollama models via localhost:11434
+- `_run_ollama_cloud()`: Remote Ollama Cloud models via `https://ollama.com` (Bearer auth, HTTPS health check)
+- `_run_junie()`: JetBrains Junie via junie-api proxy (localhost:4142)
 - `_check_port()`: Health checks before launching providers
 - `_get_mcp_flags()`: Dynamic MCP profile selection based on model
 - `_session_start()`/`_session_end()`: Session logging with durations
+
+**`_run_ollama_cloud()` — key differences from `_run_ollama()`:**
+- **Endpoint**: Remote HTTPS (`https://ollama.com`) instead of `http://localhost:11434`
+- **Auth**: Requires `OLLAMA_API_KEY` (Bearer token), passed via `ANTHROPIC_AUTH_TOKEN` or a dedicated `Authorization: Bearer …` header — unlike local Ollama, the token is **not** ignored
+- **Health check**: HTTPS reachability probe (e.g. `curl -sfI https://ollama.com/api/chat`) instead of `nc -z localhost 11434`; no local process to start
+- **No `ollama list` check**: models are resolved remotely against the Ollama Cloud catalog
+- **Environment variables**:
+  - `OLLAMA_API_ENDPOINT` (optional, default: `https://ollama.com`) — override if using a self-hosted or alternate compatible endpoint
+  - `OLLAMA_API_KEY` (**required**) — Bearer token generated at [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys)
+  - `OLLAMA_CLOUD_MODEL` (optional, default: `gpt-oss:120b`) — model slug from the Ollama Cloud catalog
 
 **Environment Variables Set:**
 ```bash
@@ -35,6 +49,16 @@ DISABLE_NON_ESSENTIAL_MODEL_CALLS="1"
 # Ollama mode
 ANTHROPIC_BASE_URL="http://localhost:11434"
 ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # Ollama ignores this value
+
+# Ollama Cloud mode
+ANTHROPIC_BASE_URL="${OLLAMA_API_ENDPOINT:-https://ollama.com}"
+ANTHROPIC_AUTH_TOKEN="${OLLAMA_API_KEY}"   # Bearer token — REQUIRED (not ignored)
+ANTHROPIC_MODEL="${OLLAMA_CLOUD_MODEL:-gpt-oss:120b}"
+
+# Junie mode
+ANTHROPIC_BASE_URL="http://localhost:4142"
+ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # junie-api ignores this value (uses JetBrains OAuth)
+ANTHROPIC_MODEL="${JUNIE_MODEL:-google-chat-gemini-pro-2.5}"
 ```
 
 **Model Switching:**
@@ -42,6 +66,16 @@ ANTHROPIC_AUTH_TOKEN="<PLACEHOLDER>"  # Ollama ignores this value
 - Override via `COPILOT_MODEL` env var (40+ models supported)
 - Default Ollama model: `devstral-small-2` (configurable via `OLLAMA_MODEL`)
 - Backup Ollama model: `ibm/granite4:small-h` (long context, 70% less VRAM)
+- Default Ollama Cloud model: `gpt-oss:120b` (configurable via `OLLAMA_CLOUD_MODEL`)
+- Default Junie model: `google-chat-gemini-pro-2.5` (configurable via `JUNIE_MODEL`)
+
+**Mode/Alias map:**
+- `direct|d` → `ccd` (Anthropic)
+- `copilot|c` → `ccc` (Copilot)
+- `ollama|o` → `cco` (Ollama Local)
+- `ollama-cloud|oc` → `ccoc` (Ollama Cloud)
+- `junie|j` → `ccj` (Junie)
+- `status|s` → `ccs` (provider health)
 
 ### 2. install.sh (Installation)
 Auto-installer that:
@@ -57,7 +91,7 @@ Auto-installer that:
 **Quick Reference:**
 ```bash
 # Core providers
-ccd, ccc, cco, ccs
+ccd, ccc, cco, ccoc, ccj, ccs
 
 # Claude models
 ccc-opus, ccc-sonnet, ccc-haiku
@@ -74,8 +108,11 @@ ccc-gemini, ccc-gemini3, ccc-gemini3-pro, ccc-gemini31
 # Claude extras
 ccc-opus-fast
 
-# Ollama models
+# Ollama Local models
 cco-devstral, cco-granite
+
+# Ollama Cloud models
+ccoc-gpt-oss, ccoc-deepseek, ccoc-qwen
 
 # Semantic shortcuts
 ccc-prod, ccc-dev, ccc-quick, ccc-code, ccc-alt, ccc-private
@@ -108,11 +145,27 @@ All sessions logged to `~/.claude/claude-switch.log`:
 - Session end: `mode=<provider> duration=<time> exit=<code>`
 - Provider info: `Provider: <name> - Model: <model>`
 
+**Example — Ollama Cloud session:**
+```
+[2026-04-16 09:12:03] [INFO] Session started mode=ollama-cloud pid=54321 pwd=/Users/livio/Documents/cc-copilot-bridge
+[2026-04-16 09:12:03] [INFO] Provider: Ollama Cloud - Model: gpt-oss:120b
+[2026-04-16 09:12:03] [INFO] Endpoint: https://ollama.com (auth: Bearer token)
+[2026-04-16 09:14:47] [INFO] Session ended mode=ollama-cloud duration=2m44s exit=0
+```
+
 ### Provider Health Checks
 Before launching, `claude-switch` verifies:
 - **Copilot**: Port 4141 responds (via `nc -z`)
 - **Ollama**: Port 11434 responds + model exists (`ollama list`)
+- **Ollama Cloud**: HTTPS reachability of `$OLLAMA_API_ENDPOINT` (default `https://ollama.com`) via `curl -sfI`; requires `OLLAMA_API_KEY`
+- **Junie**: Port 4142 responds (via `nc -z`); requires JetBrains OAuth token
 - **Anthropic**: Uses existing `ANTHROPIC_API_KEY` from environment
+
+### Port Map
+- `4141` — copilot-api (GitHub Copilot proxy)
+- `4142` — junie-api (JetBrains Junie proxy). **Note:** junie-api's upstream default port is `4141`; the bridge overrides it to `4142` so both proxies can coexist.
+- `11434` — Ollama local server
+- **Ollama Cloud** — HTTPS only (no local port). Default endpoint: `https://ollama.com`. Configurable via `OLLAMA_API_ENDPOINT` env var.
 
 ### Model Compatibility Matrix
 
@@ -127,6 +180,8 @@ Before launching, `claude-switch` verifies:
 | Copilot-Grok | /chat/completions | grok-code-fast-1 | ✅ Compatible |
 | Copilot-Codex | /responses | gpt-*-codex | ✅ Tested (via unified fork) |
 | Ollama | Native | devstral, granite4, qwen3-coder | 100% (permissive) |
+| Ollama Cloud | `https://ollama.com` (configurable) | gpt-oss, deepseek-v3.1, qwen3-coder, others | 100% (same format as local Ollama). Bearer token auth required, fixed monthly billing |
+| Junie | /v1/messages (Anthropic-compat) | google-chat-gemini-pro-2.5 (default), JetBrains AI catalog | ~80% (Gemini strict validation) |
 
 **Unified Fork (PR #167 + #170) - RECOMMENDED:**
 
@@ -178,6 +233,57 @@ ccc-gemini3       # gemini-3-flash-preview ✅ Supported
 ```bash
 ~/.claude/mcp-profiles/generate.sh
 ```
+
+### Ollama Cloud
+
+Managed Ollama models hosted at `https://ollama.com`. Same API surface as local Ollama (100% MCP compatible), but with Bearer auth and a fixed monthly billing model instead of per-request metering.
+
+**Authentication Setup:**
+
+1. Sign in at [ollama.com](https://ollama.com) with a subscription tier (see pricing below).
+2. Go to [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys) and create an API key.
+3. Export it in your shell profile:
+   ```bash
+   echo 'export OLLAMA_API_KEY="<your-key-here>"' >> ~/.zshrc
+   source ~/.zshrc
+   ```
+4. (Optional) Override the default model and/or endpoint:
+   ```bash
+   export OLLAMA_CLOUD_MODEL="deepseek-v3.1:671b"
+   export OLLAMA_API_ENDPOINT="https://ollama.com"   # default; override only for self-hosted/alternate deployments
+   ```
+
+**Billing — fixed monthly tiers (not per-request):**
+
+| Tier | Price | Request Quota | Use Case |
+|------|-------|---------------|----------|
+| Free | $0 / month | Limited daily/hourly rate (best-effort, subject to change) | Evaluation, casual use |
+| Pro | ~$20 / month | Much higher request quota suitable for regular agentic workloads | Daily development |
+| Max | ~$100 / month | Highest quota, prioritized throughput | Heavy agentic usage, teams, pair-programming sessions |
+
+> **Note:** Exact request limits per tier are set by Ollama and may evolve — check [ollama.com/pricing](https://ollama.com/pricing) for the authoritative numbers before relying on a tier.
+
+**Privacy:**
+
+- Per Ollama's policy, requests to Ollama Cloud are **not logged and not used for training**.
+- Still: Ollama Cloud runs on remote infrastructure. If you need 100% on-device privacy (e.g. proprietary client code under NDA, regulated data), prefer local Ollama (`cco`).
+
+**Environment Variables:**
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `OLLAMA_API_KEY` | ✅ Yes | — | Bearer token from [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys) |
+| `OLLAMA_API_ENDPOINT` | ❌ No | `https://ollama.com` | Override for self-hosted / alternate Ollama-compatible endpoint |
+| `OLLAMA_CLOUD_MODEL` | ❌ No | `gpt-oss:120b` | Model slug from the Ollama Cloud catalog |
+
+**Aliases:**
+
+| Alias | Model | Notes |
+|-------|-------|-------|
+| `ccoc` | `$OLLAMA_CLOUD_MODEL` (default `gpt-oss:120b`) | Default Ollama Cloud launcher |
+| `ccoc-gpt-oss` | `gpt-oss:120b` | Open-source GPT-class reasoning model |
+| `ccoc-deepseek` | `deepseek-v3.1:671b` | Strong coding / reasoning |
+| `ccoc-qwen` | `qwen3-coder:480b` | Specialized for agentic coding |
 
 ## Performance Considerations
 
@@ -292,6 +398,27 @@ brew services restart ollama
 ollama pull devstral-small-2
 # Create 64K Modelfile (see Performance Considerations section)
 OLLAMA_MODEL=devstral-64k cco
+
+# Test Ollama Cloud (requires OLLAMA_API_KEY in environment)
+export OLLAMA_API_KEY="<your-key>"              # From ollama.com/settings/api_keys
+ccoc                                            # Default: gpt-oss:120b
+OLLAMA_CLOUD_MODEL=deepseek-v3.1:671b ccoc    # Override model
+
+# Test Junie (requires junie-api running on :4142 + JetBrains OAuth)
+cd junie && bun install && bun start -- --port 4142  # In separate terminal
+ccj
+# Default model: google-chat-gemini-pro-2.5 (override via JUNIE_MODEL)
+```
+
+### Working on the Vendored junie-api
+The `junie/` directory is a **standalone Node.js/TypeScript project** with its own `package.json` and test suite. The main `cc-copilot-bridge` repo is Bash-based; junie is optional and independently buildable.
+
+```bash
+cd junie
+bun install
+bun test       # Run junie-api's test suite
+bun run build  # Build TypeScript
+bun start      # Start proxy (bridge defaults it to port 4142)
 ```
 
 ### Debugging Session Issues
@@ -300,9 +427,11 @@ OLLAMA_MODEL=devstral-64k cco
 tail -20 ~/.claude/claude-switch.log
 
 # Check provider health
-nc -z localhost 4141  # Copilot
-nc -z localhost 11434 # Ollama
-curl -s https://api.anthropic.com/v1/messages # Anthropic
+nc -z localhost 4141                                         # Copilot
+nc -z localhost 4142                                         # Junie
+nc -z localhost 11434                                        # Ollama (local)
+curl -sfI "${OLLAMA_API_ENDPOINT:-https://ollama.com}/api/chat"  # Ollama Cloud
+curl -s https://api.anthropic.com/v1/messages                # Anthropic
 
 # View session durations
 grep "Session ended" ~/.claude/claude-switch.log
@@ -310,6 +439,8 @@ grep "Session ended" ~/.claude/claude-switch.log
 # Filter by provider
 grep "mode=copilot" ~/.claude/claude-switch.log
 grep "mode=ollama" ~/.claude/claude-switch.log
+grep "mode=ollama-cloud" ~/.claude/claude-switch.log
+grep "mode=junie" ~/.claude/claude-switch.log
 ```
 
 ### Model Switching Commands
@@ -323,6 +454,11 @@ COPILOT_MODEL=gpt-4.1 ccc              # GPT alternative
 # Ollama with different models (use 64K Modelfile versions)
 OLLAMA_MODEL=devstral-64k cco          # Default (best agentic)
 OLLAMA_MODEL=ibm/granite4:small-h cco  # Long context, 70% less VRAM
+
+# Ollama Cloud with different models (requires OLLAMA_API_KEY)
+OLLAMA_CLOUD_MODEL=gpt-oss:120b ccoc     # Default, open-source GPT-class
+OLLAMA_CLOUD_MODEL=deepseek-v3.1:671b ccoc    # Strong coding / reasoning
+OLLAMA_CLOUD_MODEL=qwen3-coder:480b ccoc      # Specialized agentic coding
 ```
 
 ### MCP Troubleshooting
@@ -393,6 +529,77 @@ ollama pull ibm/granite4:small-h
 - `gpt-5.4` (1x premium, xhigh reasoning)
 - `gpt-5-mini` (0x premium, fastest)
 
+### Issue: "OLLAMA_API_KEY not set" (Ollama Cloud)
+**Cause:** `ccoc` launched without `OLLAMA_API_KEY` exported — Ollama Cloud requires a Bearer token on every request.
+**Solution:**
+```bash
+# Generate a key at https://ollama.com/settings/api_keys
+export OLLAMA_API_KEY="<your-key-here>"
+
+# Persist in shell profile so you don't have to re-export every session
+echo 'export OLLAMA_API_KEY="<your-key-here>"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify
+echo "${OLLAMA_API_KEY:+OK (key present)}"
+ccoc
+```
+
+### Issue: "Bearer token authentication failed" (Ollama Cloud)
+**Cause:** The API key is expired, revoked, mistyped, or belongs to a tier that has exceeded its monthly quota.
+**Solution:**
+1. Check the key at [ollama.com/settings/api_keys](https://ollama.com/settings/api_keys) — is it still listed and active?
+2. Check your current usage / quota on [ollama.com/pricing](https://ollama.com/pricing) or your account page — if you're on Free tier and hit the rate cap, wait or upgrade to Pro/Max.
+3. Regenerate the key and re-export:
+   ```bash
+   # After creating a fresh key in the UI:
+   export OLLAMA_API_KEY="<new-key>"
+   # Update ~/.zshrc accordingly
+   ```
+4. Manually verify the token works:
+   ```bash
+   curl -sSI -H "Authorization: Bearer ${OLLAMA_API_KEY}" \
+     "${OLLAMA_API_ENDPOINT:-https://ollama.com}/api/chat"
+   # Expect HTTP 200 / 204; a 401 means the token is rejected
+   ```
+
+### Issue: "Model not found in Ollama Cloud"
+**Cause:** The slug passed via `OLLAMA_CLOUD_MODEL` isn't in the Ollama Cloud catalog (typo, deprecated name, or local-only model).
+**Solution:**
+1. Fall back to the default to confirm connectivity:
+   ```bash
+   unset OLLAMA_CLOUD_MODEL
+   ccoc   # Uses gpt-oss:120b
+   ```
+2. List available cloud models on [ollama.com/library](https://ollama.com/library) (cloud variants typically carry a `:cloud` or `:*-cloud` tag).
+3. Re-export with a valid slug:
+   ```bash
+   export OLLAMA_CLOUD_MODEL="deepseek-v3.1:671b"
+   ccoc
+   ```
+4. **Do not use local-only tags** (e.g. `devstral-small-2`, `ibm/granite4:small-h`) with `ccoc` — those are for `cco` (local Ollama). See the provider/model matrix above.
+
+### Issue: "Endpoint unreachable" (Ollama Cloud)
+**Cause:** Network issue, DNS failure, corporate firewall/proxy blocking `ollama.com`, or an Ollama Cloud outage.
+**Solution:**
+1. Test basic HTTPS reachability:
+   ```bash
+   curl -sfI "${OLLAMA_API_ENDPOINT:-https://ollama.com}/api/chat"
+   # 200/204 → OK; timeout → network/firewall; DNS error → resolver issue
+   ```
+2. Check Ollama status page / their X/Twitter for ongoing incidents.
+3. If behind a corporate proxy, export `HTTPS_PROXY`:
+   ```bash
+   export HTTPS_PROXY="http://proxy.corp.example:8080"
+   ccoc
+   ```
+4. If using a self-hosted / mirror endpoint, verify `OLLAMA_API_ENDPOINT` is correct and reachable:
+   ```bash
+   echo "$OLLAMA_API_ENDPOINT"
+   curl -sfI "$OLLAMA_API_ENDPOINT"
+   ```
+5. **Fallback while the cloud is unavailable:** use `cco` (local Ollama) or `ccc` (Copilot) to keep working.
+
 ## Quality Gates (before commit)
 
 ```bash
@@ -431,6 +638,7 @@ pwd  # Verify you're in /Users/florianbruniaux/Sites/perso/cc-copilot-bridge
 - `~/.claude/mcp-profiles/excludes.yaml` - Add problematic MCP servers
 - `~/.claude/claude_desktop_config.json` - Base MCP configuration
 - `~/bin/claude-switch` - Script modifications
+- `junie/` - Vendored junie-api source (TypeScript/Node.js); standalone project with its own `package.json` — edit only when patching the Junie proxy
 
 ### Documentation structure:
 - `README.md` - Complete documentation
@@ -456,6 +664,9 @@ pwd  # Verify you're in /Users/florianbruniaux/Sites/perso/cc-copilot-bridge
 | Offline work | `cco` | No internet required |
 | Best agentic local | `cco-devstral` | Devstral-small-2 (68% SWE-bench) |
 | Long context local | `cco-granite` | Granite4 (70% less VRAM) |
+| Managed Ollama, predictable cost | `ccoc` | Ollama Cloud, fixed monthly tier, no per-request metering |
+| Large OSS model without local VRAM | `ccoc-gpt-oss` / `ccoc-deepseek` | Ollama Cloud: runs big models remotely, same API as local |
+| JetBrains AI subscription | `ccj` | Use existing JetBrains AI quota (Gemini 2.5 Pro default) |
 
 ## Package Managers Distribution
 
@@ -881,17 +1092,26 @@ Actuellement Gemini 3 Preview:
 ## Testing Changes
 
 When modifying `claude-switch`:
-1. Test with all 3 providers (`ccd`, `ccc`, `cco`)
+1. Test with all 5 providers (`ccd`, `ccc`, `cco`, `ccoc`, `ccj`)
 2. Check session logs: `tail ~/.claude/claude-switch.log`
 3. Verify health checks: `ccs`
-4. Test model switching: `COPILOT_MODEL=<model> ccc`
-5. Test error handling: Stop provider and try launching
+4. Test model switching: `COPILOT_MODEL=<model> ccc`, `OLLAMA_CLOUD_MODEL=<model> ccoc`, `JUNIE_MODEL=<model> ccj`
+5. Test error handling: Stop provider and try launching (for Ollama Cloud: unset `OLLAMA_API_KEY` and launch `ccoc` to verify auth error path)
 
 ## Notes for AI Assistants
 
 - All bash scripts use `set -euo pipefail` for safety
-- Port conflicts: Copilot (4141), Ollama (11434)
+- Port conflicts: Copilot (4141), Junie (4142), Ollama local (11434). Ollama Cloud uses HTTPS (no local port).
 - Session tracking via log file enables usage analytics
 - MCP profiles prevent runtime errors with strict validation models
 - Default models chosen for best quality/speed balance
 - Logs are append-only, consider rotation for long-term use
+- Ollama Cloud is the only provider whose `ANTHROPIC_AUTH_TOKEN` is **not** a placeholder — it is the real Bearer token from `OLLAMA_API_KEY` and must be treated as a secret
+
+## Risks & Caveats: Junie Provider
+
+- **Reverse-engineered**: junie-api is a community reverse-engineered proxy to the JetBrains AI / Junie backend; it is not an official JetBrains product and may break without notice when JetBrains changes its internal APIs.
+- **ToS**: Usage is subject to the JetBrains AI Terms of Service; programmatic access via third-party proxies may not be explicitly permitted — use at your own risk and only with a valid JetBrains AI subscription.
+- **Auth**: Requires a JetBrains OAuth token (obtained via the junie-api auth flow); no Anthropic/OpenAI API key is used.
+- **Port override**: junie-api's upstream default is `4141`, which collides with copilot-api. The bridge launches it on `4142`; if you run junie-api outside claude-switch, pass `--port 4142` explicitly.
+- **Stability tier**: Treat Junie as experimental — prefer `ccd`/`ccc` for production work.

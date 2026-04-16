@@ -17,6 +17,7 @@ eval "$(claude-switch --shell-config)"
 | `ccd` | `claude-switch direct` | Anthropic Direct API (requires `ANTHROPIC_API_KEY`) |
 | `ccc` | `claude-switch copilot` | GitHub Copilot via copilot-api (default: claude-sonnet-4-6) |
 | `cco` | `claude-switch ollama` | Local Ollama models (default: devstral-small-2) |
+| `ccoc` | `claude-switch cloud` | Ollama Cloud hosted models (requires `OLLAMA_API_KEY`) |
 | `ccs` | `claude-switch status` | Show status of all providers |
 
 ## Claude Models via Copilot
@@ -129,6 +130,71 @@ cco-devstral -p "Analyze this codebase"  # Best agentic performance
 cco-granite -p "Review this 50K LOC project"  # Long context
 ```
 
+## Ollama Cloud Models
+
+Hosted inference for frontier open-source models that won't fit on local hardware. Same Ollama-compatible interface as local `cco`, but pointed at the Ollama Cloud API (`https://ollama.com/api`).
+
+| Alias | Model | Params | Use Case |
+|-------|-------|--------|----------|
+| `ccoc` | `gpt-oss:120b` (default) | 120B | Base launch command, general-purpose frontier model |
+| `ccoc-gpt-oss` | `gpt-oss:120b` | 120B | Explicit default, balanced quality/speed |
+| `ccoc-deepseek` | `deepseek-v3.1:671b` | 671B | Deepest reasoning, complex architectural work |
+| `ccoc-qwen` | `qwen3-coder:480b` | 480B | Code generation, agentic coding tasks |
+
+**When to use Ollama Cloud (primary use cases):**
+- **Remote inference without local GPU** — run 120B–671B models on a laptop with no NVIDIA/Apple Silicon requirement
+- **Fixed monthly billing** — predictable cost (Free / Pro ~$20 / Max ~$100), no per-request surprises
+- **No privacy concerns with hosted models** — Ollama does not log requests or use them for training (but code still leaves your machine; use `cco` local for NDA/regulated data)
+
+**Requirements:**
+- Ollama Cloud account with an active subscription (Free / Pro / Max)
+- `OLLAMA_API_KEY` environment variable exported (e.g. in `~/.zshrc`)
+- No local GPU or large RAM needed — inference runs on Ollama's infrastructure
+
+**Setup:**
+```bash
+# 1. Get an API key from ollama.com/settings/api_keys
+# 2. Export in your shell profile
+echo 'export OLLAMA_API_KEY="your-key-here"' >> ~/.zshrc
+source ~/.zshrc
+
+# 3. (Optional) Override endpoint for self-hosted Ollama-compatible deployments
+# export OLLAMA_API_ENDPOINT="https://my-ollama.example.com/api"
+
+# 4. Verify and launch
+ccoc
+```
+
+**Billing — fixed monthly tiers (not per-request):**
+
+| Tier | Price | Request Quota | Use Case |
+|------|-------|---------------|----------|
+| Free | $0 / month | Limited daily/hourly rate | Evaluation, casual use |
+| Pro | ~$20 / month | Much higher quota for regular agentic workloads | Daily development |
+| Max | ~$100 / month | Highest quota, prioritized throughput | Heavy agentic usage, teams |
+
+**No Anthropic API or GitHub Copilot quota is consumed** — this is a completely separate billing channel. Exact limits are set by Ollama; see [ollama.com/pricing](https://ollama.com/pricing).
+
+**Example:**
+```bash
+ccoc -p "Explain this codebase architecture"          # Default gpt-oss:120b
+ccoc-deepseek -p "Redesign this system for scale"     # Maximum reasoning
+ccoc-qwen -p "Generate a typed REST client"           # Code-optimized
+OLLAMA_CLOUD_MODEL=custom-model ccoc            # Custom override
+```
+
+**When to use Ollama Cloud vs Ollama Local:**
+
+| Scenario | Use |
+|----------|-----|
+| Work laptop without GPU | `ccoc` |
+| Air-gapped / proprietary code | `cco` (local, offline) |
+| Frontier-size models (>100B) | `ccoc` |
+| Zero cloud cost preferred | `cco` |
+| Quick experiments with big models | `ccoc` |
+
+📖 See [CLAUDE.md](../CLAUDE.md) for full provider architecture details.
+
 ## Semantic Aliases (Shortcuts)
 
 User-friendly aliases that map to specific use cases:
@@ -163,8 +229,10 @@ ccc-private    # Work on proprietary code
 | **0x (Free)** | Claude Opus/Sonnet/Haiku, GPT-4.1, GPT-5-mini, All Codex, Gemini 2.5/3-flash | Included in Copilot Pro+ subscription |
 | **0.25x** | Grok Code Fast 1 | Economical, consumes minimal quota |
 | **1x (Premium)** | GPT-5, GPT-5.2, Codex-Max, Gemini-3-Pro | Consumes completions quota faster |
+| **Local (Free)** | All `cco-*` models | No cost, runs on your hardware |
+| **Ollama Cloud** | All `ccoc-*` models | Fixed monthly tier via Ollama Cloud (Free / Pro ~$20 / Max ~$100, separate from Copilot) |
 
-**Note:** All models are effectively "free" with Copilot Pro+ subscription, but 1x models consume your quota faster.
+**Note:** Copilot models are effectively "free" with Copilot Pro+ subscription, but 1x models consume your quota faster. Ollama Cloud is billed independently via a fixed monthly tier — requires `OLLAMA_API_KEY` and an active Ollama Cloud subscription.
 
 ## Decision Tree
 
@@ -177,6 +245,9 @@ Alternative view? → ccc-alt (gpt-4.1)
 Private/offline? → ccc-private (ollama devstral)
 Long context (>32K)? → cco-granite
 Maximum agentic? → cco-devstral
+Frontier open model, no GPU? → ccoc (gpt-oss:120b)
+Deep reasoning (cloud)? → ccoc-deepseek (671B)
+Cloud code generation? → ccoc-qwen (qwen3-coder 480B)
 ```
 
 ## Advanced Usage
@@ -191,6 +262,9 @@ COPILOT_MODEL=gpt-5 ccc -p "test"
 
 # Override Ollama model
 OLLAMA_MODEL=qwen3-coder:30b cco -p "test"
+
+# Override Ollama Cloud model
+OLLAMA_CLOUD_MODEL=deepseek-v3.1:671b ccoc -p "test"
 ```
 
 ### Chaining with Other Tools
@@ -231,6 +305,7 @@ grep "Session ended" ~/.claude/claude-switch.log
 | Codex (`ccc-codex*`) | ~80% | ✅ Excellent | ✅ Excellent | Code generation |
 | Gemini (`ccc-gemini*`) | ⚠️ Limited | ⚠️ Issues | ⚠️ Issues | Simple prompts only |
 | Ollama (`cco-*`) | 100% | ✅ Good | ✅ Good | Private/offline |
+| Ollama Cloud (`ccoc-*`) | 100% | ✅ Good | ✅ Good | Frontier open models, no GPU |
 
 ## Troubleshooting
 
@@ -247,6 +322,14 @@ ccunified
 ```bash
 ollama pull devstral-small-2
 ollama pull ibm/granite4:small-h
+```
+
+### "OLLAMA_API_KEY not set" (Ollama Cloud)
+```bash
+# Get your key from https://ollama.com/ and export it
+echo 'export OLLAMA_API_KEY="your-key-here"' >> ~/.zshrc
+source ~/.zshrc
+ccoc  # Retry
 ```
 
 ### Slow Ollama responses
